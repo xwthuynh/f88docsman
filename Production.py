@@ -29,7 +29,7 @@ def get_connection():
         f"PWD={SQL_PASSWORD};"
         "Encrypt=yes;"
         "TrustServerCertificate=yes;"
-        "Connection Timeout=10;"
+        "Connection Timeout=60;"
     )
 
     conn = pyodbc.connect(connection_string)
