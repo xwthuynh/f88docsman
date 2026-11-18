@@ -1,7 +1,6 @@
 streamlit
 pandas
-json
-gspread
 polars
-pyodbc
-SQLAlchemy
+gspread
+google-auth
+openpyxl
