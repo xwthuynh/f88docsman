@@ -1,132 +1,286 @@
-# from asyncio import start_unix_server
-from logging import PlaceHolder
-import streamlit as st
+import gspread
 import pandas as pd
-from pathlib import Path
-import pyodbc
-import sqlalchemy as sql
-# from jsonschema.benchmarks import contains
-from polars.functions.aggregation import horizontal
-from sqlalchemy import create_engine, text
-import os
-from contextlib import closing
+import streamlit as st
 import json
 
+from pathlib import Path
+from datetime import date, datetime
 
-## CONNECT DATABASE:
-SQL_SERVER = "10.2.200.7"
-SQL_DATABASE = "sanpham"
-SQL_USERNAME = "sp_khanhhp2"
-SQL_PASSWORD = "Abcd@1234"
+
+# =====================================================
+# CONNECT GOOGLE SHEETS
+# =====================================================
+
+GOOGLE_SHEET_ID = "1bwWXjAQzS7zyAef0gU7df7ad-cpDHDRwujzrEUbdiBI"
+
+JSON_FILE = (
+    Path(__file__).resolve().parent
+    / "f88docsman-32668ab9bf17.json"
+)
+
 
 def get_connection():
 
-    connection_string = (
-        "DRIVER={ODBC Driver 17 for SQL Server};"
-        f"SERVER={SQL_SERVER};"
-        f"DATABASE={SQL_DATABASE};"
-        f"UID={SQL_USERNAME};"
-        f"PWD={SQL_PASSWORD};"
-        "Encrypt=yes;"
-        "TrustServerCertificate=yes;"
-        "Connection Timeout=60;"
+    gc = gspread.service_account(
+        filename=str(JSON_FILE)
     )
 
-    conn = pyodbc.connect(connection_string)
+    conn = gc.open_by_key(GOOGLE_SHEET_ID)
 
     return conn
 
 
-## DATABASE FUNCTIONS
+# =====================================================
+# DATABASE HELPER FUNCTIONS
+# =====================================================
+
+def get_next_id(worksheet, id_column):
+    """
+    Tự động tạo ID mới = MAX(ID) + 1
+    """
+
+    headers = worksheet.row_values(1)
+
+    if id_column not in headers:
+        raise ValueError(
+            f"Không tìm thấy cột {id_column} "
+            f"trong sheet {worksheet.title}"
+        )
+
+    column_index = headers.index(id_column) + 1
+
+    values = worksheet.col_values(column_index)[1:]
+
+    ids = [
+        int(float(value))
+        for value in values
+        if str(value).strip()
+    ]
+
+    return max(ids, default=0) + 1
+
+
+def convert_cell(value):
+    """
+    Chuyển giá trị Python sang định dạng Google Sheets.
+    """
+
+    if value is None:
+        value = ""
+
+    elif isinstance(value, (date, datetime)):
+        value = value.isoformat()
+
+    elif isinstance(value, (list, tuple)):
+        value = ",".join(map(str, value))
+
+    elif isinstance(value, dict):
+        value = json.dumps(
+            value,
+            ensure_ascii=False
+        )
+
+    if isinstance(value, bool):
+        result = {"boolValue": value}
+
+    elif isinstance(value, (int, float)):
+        result = {"numberValue": value}
+
+    else:
+        result = {"stringValue": str(value)}
+
+    return {
+        "userEnteredValue": result
+    }
+
+
+def build_insert(worksheet, row_data):
+    """
+    Tạo yêu cầu INSERT theo đúng thứ tự cột
+    trong Google Sheets.
+    """
+
+    headers = worksheet.row_values(1)
+
+    if not headers:
+        raise ValueError(
+            f"Sheet {worksheet.title} chưa có header"
+        )
+
+    missing = set(row_data.keys()) - set(headers)
+
+    if missing:
+        raise ValueError(
+            f"Sheet {worksheet.title} thiếu cột: {missing}"
+        )
+
+    values = [
+        convert_cell(row_data.get(column, ""))
+        for column in headers
+    ]
+
+    return {
+        "appendCells": {
+            "sheetId": worksheet.id,
+            "rows": [
+                {"values": values}
+            ],
+            "fields": "userEnteredValue"
+        }
+    }
+
+
+# =====================================================
+# DATABASE FUNCTIONS
+# =====================================================
+
 def save_new_form(form_data):
-    doc = form_data['DOCS']
-    docver = form_data['DOCVERS']
-    docrule = form_data['DOCVERDTL']
+
+    doc = form_data["DOCS"]
+    docver = form_data["DOCVERS"]
+    docrule = form_data["DOCVERDTL"]
 
     conn = get_connection()
-    conn.autocommit = False
 
-    try:
-        cursor = conn.cursor()
-        cursor.execute("""
-                    INSERT INTO ptsp.DOCS
-                    (
-                        DOC_NAME,
-                        DOC_NO,
-                        DOC_TYPE,
-                        ASSET,
-                        DEPARTMENT,
-                        DOC_LINK
-                    )
+    ws_doc = conn.worksheet("DOCS")
+    ws_ver = conn.worksheet("DOCVERS")
+    ws_rule = conn.worksheet("DOCVERDTL")
 
-                    OUTPUT INSERTED.DOC_ID
+    # ---------------------------------
+    # 1. TẠO DOC_ID
+    # ---------------------------------
 
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                       doc["DOC_NAME"],
-                       doc["DOC_NO"],
-                       doc["DOC_TYPE"],
-                       ",".join(doc["ASSET"]),
-                       doc["DEPARTMENT"],
-                       doc['DOC_LINK']
-                       )
-        doc_id = cursor.fetchone()[0]
+    doc_id = get_next_id(
+        ws_doc,
+        "DOC_ID"
+    )
 
-        cursor.execute("""
-                INSERT INTO ptsp.DOCVERS
-                (
-                    DOC_ID,
-                    DOC_VER_NO,
-                    DOC_VER_TYPE,
-                    PIC,
-                    ISSUED_DT,
-                    EFFECTIVE_FROM,
-                    EFFECTIVE_TO
-                )
-                
-                OUTPUT INSERTED.DOC_VER_ID
+    doc_data = {
+        "DOC_ID": doc_id,
+        "DOC_NAME": doc["DOC_NAME"],
+        "DOC_NO": doc["DOC_NO"],
+        "DOC_TYPE": doc["DOC_TYPE"],
+        "ASSET": ",".join(doc["ASSET"])
+                 if isinstance(doc["ASSET"], (list, tuple))
+                 else doc["ASSET"],
+        "DEPARTMENT": doc["DEPARTMENT"],
+        "DOC_LINK": doc["DOC_LINK"]
+    }
 
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-                   doc_id,
-                   docver["DOC_VER_NO"],
-                   docver["DOC_VER_TYPE"],
-                   docver["PIC"],
-                   docver["ISSUED_DT"],
-                   docver["EFFECTIVE_FROM"],
-                   docver["EFFECTIVE_TO"]
-                   )
-        doc_ver_id = cursor.fetchone()[0]
+    # ---------------------------------
+    # 2. TẠO DOC_VER_ID
+    # ---------------------------------
 
-        for rule in docrule:
-            cursor.execute("""
-                   INSERT INTO ptsp.DOCVERDTL
-                   (
-                       DOC_VER_ID,
-                       SCHEME_RULE
-                   )
+    doc_ver_id = get_next_id(
+        ws_ver,
+        "DOC_VER_ID"
+    )
 
-                   VALUES (?, ?)
-               """,
-                       doc_ver_id,
-                       rule["SCHEME_RULE"]
-                       )
+    ver_data = {
+        "DOC_VER_ID": doc_ver_id,
+        "DOC_ID": doc_id,
+        "DOC_VER_NO": docver["DOC_VER_NO"],
+        "DOC_VER_TYPE": docver["DOC_VER_TYPE"],
+        "PIC": docver["PIC"],
+        "ISSUED_DT": docver["ISSUED_DT"],
+        "EFFECTIVE_FROM": docver["EFFECTIVE_FROM"],
+        "EFFECTIVE_TO": docver["EFFECTIVE_TO"]
+    }
+
+    # Thay thế một số giá trị DEFAULT của SQL Server.
+    ver_headers = ws_ver.row_values(1)
+
+    if "STATUS" in ver_headers:
+        ver_data["STATUS"] = "ACTIVE"
+
+    if "PARAM_CODES" in ver_headers:
+        ver_data["PARAM_CODES"] = "[]"
+
+    # ---------------------------------
+    # 3. CHUẨN BỊ LƯU DỮ LIỆU
+    # ---------------------------------
+
+    requests = [
+        build_insert(ws_doc, doc_data),
+        build_insert(ws_ver, ver_data)
+    ]
+
+    # ---------------------------------
+    # 4. LƯU SCHEME_RULE
+    # ---------------------------------
+
+    rule_headers = ws_rule.row_values(1)
+
+    # Hỗ trợ hai cách đặt tên cột ID.
+    rule_id_column = next(
+        (
+            col
+            for col in [
+                "DOC_VER_DTL_ID",
+                "DOCVERDTL_ID"
+            ]
+            if col in rule_headers
+        ),
+        None
+    )
+
+    if rule_id_column:
+        rule_id = get_next_id(
+            ws_rule,
+            rule_id_column
+        )
+
+    for i, rule in enumerate(docrule):
+
+        scheme_rule = rule["SCHEME_RULE"]
+
+        # Chuyển dictionary thành JSON string nếu cần.
+        if isinstance(scheme_rule, dict):
+            scheme_rule = json.dumps(
+                scheme_rule,
+                ensure_ascii=False
+            )
+
+        else:
+            # Kiểm tra JSON string có hợp lệ không.
+            json.loads(scheme_rule)
+
+        rule_data = {
+            "DOC_VER_ID": doc_ver_id,
+            "SCHEME_RULE": scheme_rule
+        }
+
+        if rule_id_column:
+            rule_data[rule_id_column] = rule_id + i
+
+        requests.append(
+            build_insert(
+                ws_rule,
+                rule_data
+            )
+        )
+
+    # ---------------------------------
+    # 5. INSERT GOOGLE SHEETS
+    # ---------------------------------
+
+    conn.batch_update({
+        "requests": requests
+    })
+
+    # Cập nhật cache sau khi lưu.
+    get_data.clear()
+
+    return doc_id, doc_ver_id
 
 
-        conn.commit()
+# =====================================================
+# GET DATA
+# =====================================================
 
-    except Exception:
-        conn.rollback()
-        raise
-
-    finally:
-        conn.close()
-
-
-## GET DATA:
-query_doc = "SELECT * FROM ptsp.DOCS"
-query_ver = "SELECT * FROM ptsp.DOCVERS"
-query_rule = "SELECT * FROM ptsp.DOCVERDTL"
+query_doc = "DOCS"
+query_ver = "DOCVERS"
+query_rule = "DOCVERDTL"
 
 
 @st.cache_data(ttl=300)
@@ -134,25 +288,61 @@ def get_data(query):
 
     conn = get_connection()
 
-    try:
-        cursor = conn.cursor()
-        cursor.execute(query)
-        columns = [col[0] for col in cursor.description]
-        rows = cursor.fetchall()
+    worksheet = conn.worksheet(query)
 
-        df = pd.DataFrame(
-            [tuple(row) for row in rows],
-            columns=columns
-        )
+    headers = worksheet.row_values(1)
 
-        return df
+    data = worksheet.get_all_records(
+        numericise_ignore=["all"]
+    )
 
-    finally:
-        conn.close()
+    df = pd.DataFrame(
+        data,
+        columns=headers
+    )
+
+    # Chuyển các cột ID về dạng số.
+    id_columns = [
+        "DOC_ID",
+        "DOC_VER_ID",
+        "DOC_VER_DTL_ID",
+        "DOCVERDTL_ID"
+    ]
+
+    for col in id_columns:
+        if col in df.columns:
+            df[col] = pd.to_numeric(
+                df[col],
+                errors="raise"
+            )
+
+    # Chuyển các cột ngày về kiểu date.
+    date_columns = [
+        "ISSUED_DT",
+        "EFFECTIVE_FROM",
+        "EFFECTIVE_TO"
+    ]
+
+    for col in date_columns:
+        if col in df.columns:
+            df[col] = pd.to_datetime(
+                df[col].replace("", None),
+                errors="coerce"
+            ).dt.date
+
+    return df
+
+
+# =====================================================
+# LOAD DATA
+# =====================================================
 
 doc = get_data(query_doc)
+
 doc_ver = get_data(query_ver)
+
 doc_rule = get_data(query_rule)
+
 
 ## PROCESS DATA:
 import polars as pl
