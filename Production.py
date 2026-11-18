@@ -350,28 +350,32 @@ doc_rule = get_data(query_rule)
 
 ## PROCESS DATA:
 import polars as pl
+@st.cache_data(ttl=300)
+def process_data(doc, doc_ver, doc_rule):
+    doc = pl.from_pandas(doc)
+    doc_ver = pl.from_pandas(doc_ver)
+    doc_rule = pl.from_pandas(doc_rule)
 
-doc = pl.from_pandas(doc)
-doc_ver = pl.from_pandas(doc_ver)
-doc_rule = pl.from_pandas(doc_rule)
-
-df = (doc_ver.select(['DOC_VER_ID', 'DOC_VER_NO','DOC_ID', 'DOC_VER_TYPE', 'PIC', 'ISSUED_DT', 'EFFECTIVE_FROM', 'EFFECTIVE_TO',
+    df = (doc_ver.select(['DOC_VER_ID', 'DOC_VER_NO','DOC_ID', 'DOC_VER_TYPE', 'PIC', 'ISSUED_DT', 'EFFECTIVE_FROM', 'EFFECTIVE_TO',
                       'STATUS'])
       .join(doc.select(['DOC_ID', 'DOC_NAME', 'DOC_TYPE','DOC_NO', 'ASSET','DOC_LINK']), how='left', on=['DOC_ID'])
       .join(doc_rule.select(['DOC_VER_ID', 'SCHEME_RULE']), how='left', on=['DOC_VER_ID'])
       )
 
-df = df.with_columns(pl.col('ISSUED_DT').cast(pl.Utf8).str.to_date(format='%Y-%m-%d').dt.strftime('%Y%m%d').str.slice(0,6).alias('ISSUED_MONTH'))
+    df = df.with_columns(pl.col('ISSUED_DT').cast(pl.Utf8).str.to_date(format='%Y-%m-%d').dt.strftime('%Y%m%d').str.slice(0,6).alias('ISSUED_MONTH'))
 
 #1/ GET JSON FILTER:
-df = df.with_columns(
+    df = df.with_columns(
     pl.col('SCHEME_RULE').str.json_path_match("$.fund").str.json_decode(pl.List(pl.String)).list.eval(pl.element().str.to_uppercase()).alias('FUND'),
             pl.col('SCHEME_RULE').str.json_path_match("$.products").str.json_decode(pl.List(pl.String)).list.eval(pl.element().str.to_uppercase()).alias('PRODUCTS')
-)
+    )    
 
-fund_fil = df.select(pl.col('FUND').explode().unique())
-nsp_fil = df.select(pl.col('PRODUCTS').explode().unique())
-
+    fund_fil = df.select(pl.col('FUND').explode().unique())
+    nsp_fil = df.select(pl.col('PRODUCTS').explode().unique())
+    
+    return df
+    
+df = process_data(doc, doc_ver, doc_rule)
 
 ## BUILD APP - SCREENS:
 st.set_page_config(
