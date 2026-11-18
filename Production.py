@@ -21,8 +21,12 @@ JSON_FILE = (
 
 def get_connection():
 
-    gc = gspread.service_account(
-        filename=str(JSON_FILE)
+    credentials = json.loads(
+        st.secrets["google_service_account_json"]
+    )
+
+    gc = gspread.service_account_from_dict(
+        credentials
     )
 
     conn = gc.open_by_key(GOOGLE_SHEET_ID)
