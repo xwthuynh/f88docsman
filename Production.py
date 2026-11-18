@@ -373,9 +373,9 @@ def process_data(doc, doc_ver, doc_rule):
     fund_fil = df.select(pl.col('FUND').explode().unique())
     nsp_fil = df.select(pl.col('PRODUCTS').explode().unique())
     
-    return df
+    return df, fund_fil, nsp_fil
     
-df = process_data(doc, doc_ver, doc_rule)
+df, fund_fil, nsp_fil = process_data(doc, doc_ver, doc_rule)
 
 ## BUILD APP - SCREENS:
 st.set_page_config(
