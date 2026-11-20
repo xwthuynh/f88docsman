@@ -2,7 +2,8 @@ import gspread
 import pandas as pd
 import streamlit as st
 import json
-
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from datetime import date, datetime
 
@@ -18,7 +19,6 @@ JSON_FILE = (
     / "f88docsman-32668ab9bf17.json"
 )
 
-
 def get_connection():
 
     credentials = json.loads(
@@ -33,6 +33,15 @@ def get_connection():
 
     return conn
 
+# JSON_FILE = r"C:\Users\khanhhp2\OneDrive - CONG TY CO PHAN KINH DOANH F88\APPS\F88Docs\f88docsman-b8396565e6b1.json"
+
+#
+# def get_connection():
+#     gc = gspread.service_account(filename=JSON_FILE)
+#     gc.set_timeout((10, 30))
+#     conn = gc.open_by_key(GOOGLE_SHEET_ID)
+#
+#     return conn
 
 # =====================================================
 # DATABASE HELPER FUNCTIONS
@@ -139,6 +148,9 @@ def build_insert(worksheet, row_data):
 # =====================================================
 
 def save_new_form(form_data):
+    created_dt = datetime.now(
+        ZoneInfo("Asia/Ho_Chi_Minh")
+    ).isoformat(timespec="seconds")
 
     doc = form_data["DOCS"]
     docver = form_data["DOCVERS"]
@@ -168,7 +180,8 @@ def save_new_form(form_data):
                  if isinstance(doc["ASSET"], (list, tuple))
                  else doc["ASSET"],
         "DEPARTMENT": doc["DEPARTMENT"],
-        "DOC_LINK": doc["DOC_LINK"]
+        "DOC_LINK": doc["DOC_LINK"],
+        'CREATED_DT': created_dt
     }
 
     # ---------------------------------
@@ -188,14 +201,21 @@ def save_new_form(form_data):
         "PIC": docver["PIC"],
         "ISSUED_DT": docver["ISSUED_DT"],
         "EFFECTIVE_FROM": docver["EFFECTIVE_FROM"],
-        "EFFECTIVE_TO": docver["EFFECTIVE_TO"]
+        "EFFECTIVE_TO": docver["EFFECTIVE_TO"],
+        'CREATED_DT': created_dt
     }
 
     # Thay thế một số giá trị DEFAULT của SQL Server.
     ver_headers = ws_ver.row_values(1)
 
+
     if "STATUS" in ver_headers:
-        ver_data["STATUS"] = "ACTIVE"
+
+        if docver["EFFECTIVE_TO"] is not None and docver["EFFECTIVE_TO"] < today:
+            ver_data["STATUS"] = "INACTIVE"
+
+        else:
+            ver_data["STATUS"] = "ACTIVE"
 
     if "PARAM_CODES" in ver_headers:
         ver_data["PARAM_CODES"] = "[]"
@@ -251,7 +271,8 @@ def save_new_form(form_data):
 
         rule_data = {
             "DOC_VER_ID": doc_ver_id,
-            "SCHEME_RULE": scheme_rule
+            "SCHEME_RULE": scheme_rule,
+            'CREATED_DT': created_dt
         }
 
         if rule_id_column:
@@ -289,13 +310,9 @@ query_rule = "DOCVERDTL"
 
 @st.cache_data(ttl=300)
 def get_data(query):
-
     conn = get_connection()
-
     worksheet = conn.worksheet(query)
-
     headers = worksheet.row_values(1)
-
     data = worksheet.get_all_records(
         numericise_ignore=["all"]
     )
@@ -350,11 +367,16 @@ doc_rule = get_data(query_rule)
 
 ## PROCESS DATA:
 import polars as pl
+
 @st.cache_data(ttl=300)
-def process_data(doc, doc_ver, doc_rule):
+def process_data(doc,doc_ver,doc_rule, today):
     doc = pl.from_pandas(doc)
     doc_ver = pl.from_pandas(doc_ver)
     doc_rule = pl.from_pandas(doc_rule)
+
+    doc_ver = doc_ver.with_columns(pl.col('EFFECTIVE_TO').cast(pl.Date))
+
+    doc_ver = doc_ver.with_columns(pl.when(pl.col('EFFECTIVE_TO')<today).then(pl.lit('INACTIVE')).otherwise(pl.lit('ACTIVE')).alias('STATUS'))
 
     df = (doc_ver.select(['DOC_VER_ID', 'DOC_VER_NO','DOC_ID', 'DOC_VER_TYPE', 'PIC', 'ISSUED_DT', 'EFFECTIVE_FROM', 'EFFECTIVE_TO',
                       'STATUS'])
@@ -364,20 +386,28 @@ def process_data(doc, doc_ver, doc_rule):
 
     df = df.with_columns(pl.col('ISSUED_DT').cast(pl.Utf8).str.to_date(format='%Y-%m-%d').dt.strftime('%Y%m%d').str.slice(0,6).alias('ISSUED_MONTH'))
 
-#1/ GET JSON FILTER:
     df = df.with_columns(
-    pl.col('SCHEME_RULE').str.json_path_match("$.fund").str.json_decode(pl.List(pl.String)).list.eval(pl.element().str.to_uppercase()).alias('FUND'),
+        pl.col('SCHEME_RULE').str.json_path_match("$.fund").str.json_decode(pl.List(pl.String)).list.eval(pl.element().str.to_uppercase()).alias('FUND'),
             pl.col('SCHEME_RULE').str.json_path_match("$.products").str.json_decode(pl.List(pl.String)).list.eval(pl.element().str.to_uppercase()).alias('PRODUCTS')
-    )    
+    )
 
     fund_fil = df.select(pl.col('FUND').explode().unique())
     nsp_fil = df.select(pl.col('PRODUCTS').explode().unique())
-    
+
     return doc, doc_ver, doc_rule, df, fund_fil, nsp_fil
-    
+
+today = datetime.now(
+    ZoneInfo("Asia/Ho_Chi_Minh")
+).date()
+
 doc, doc_ver, doc_rule, df, fund_fil, nsp_fil = process_data(
-    doc, doc_ver, doc_rule
+    doc,
+    doc_ver,
+    doc_rule,
+    today
 )
+
+
 
 ## BUILD APP - SCREENS:
 st.set_page_config(
@@ -566,7 +596,10 @@ def reset_new_doc():
     st.session_state.form_data = {}
     st.session_state.rule_count = 1
 
-@st.dialog("Tạo văn bản mới",width="large",on_dismiss=reset_new_doc)
+@st.dialog("Tạo văn bản mới",width="large",
+           # on_dismiss=reset_new_doc
+            dismissible=False
+           )
 def add_new_doc():
     step = st.session_state.form_step
 
@@ -624,10 +657,10 @@ def add_new_doc():
                 form_vertype = st.text_input(label='Loại phiên bản',value='Mới',disabled=True)
             with form_col_3:
                 form_pic = st.selectbox(key='form_pic', index=None,
-                                        options=['Huỳnh Phùng Khánh', 'Nhâm Văn Quý', 'Nguyễn Thị Xuyến',
-                                                 'Đặng Thị Thu Hà', 'Nguyễn Minh Ngọc','Phùng Thị Hồng Vân',
+                                        options=['Huỳnh Phùng Khánh', 'Nhâm Văn Quý', 'Nguyễn Thị Xuyến','Trần Thị Trang',
+                                                 'Đặng Thị Thu Hà', 'Nguyễn Minh Ngọc','Phùng Thị Hồng Vân','Trần Thị Ngọc Trang',
                                                  'Nguyễn Gia Phương Anh', 'Trần Thu Huyền', 'Nguyễn Thị Thùy Dương',
-                                                 'Đoàn Hồng Ngọc', 'Trịnh Minh Anh','Phạm Thị Phương'], label='PIC',
+                                                 'Đoàn Hồng Ngọc', 'Trịnh Minh Anh','Phạm Thị Phương','Trần Thùy Vân','Trần Nữ Vân Anh'], label='PIC',
                                         placeholder='Chọn PIC')
 
             form_col_4, form_col_5, form_col_6 = st.columns(3)
@@ -678,14 +711,16 @@ def add_new_doc():
             with st.expander(label=f'Rule {i}', expanded=True):
                 exp_col_1, exp_col_2, exp_col_3, exp_col_4 = st.columns(4)
                 with exp_col_1:
-                    st.multiselect("Nguồn", ["F88", 'CIMB', 'MB'], key=f"fund_{i}")
+                    selected_fund = st.multiselect("Nguồn", ["F88", 'CIMB', 'MB'], key=f"fund_{i}")
+                    is_f88 = 'F88' in selected_fund
+                    is_partner = any(fund in selected_fund for fund in ['CIMB','MB'])
                 with exp_col_2:
                     st.multiselect("Loại khách hàng", ["MỚI", 'CŨ'], key=f"custype_{i}")
                 with exp_col_3:
                     st.multiselect("Điểm", ["Tốt","Khá","Trung bình","Kém","A", 'B', 'C', 'D', 'E'], key=f"score_{i}")
                 with exp_col_4:
-                    st.multiselect("Nhóm sản phẩm", ["OT BAU KHCN","OT BAU KHDN", "OT BAU HKD", "OT 3.6", 'OT 4.0', 'OT MYF88', 'OT KHQL'
-                        , 'LĐTD', 'CN', 'VCVP', 'TXCN', 'TT', '6X', 'XM 5.4', 'XM KHQL', 'XM MYF88', 'XM GCK',
+                    st.multiselect("Nhóm sản phẩm", ["OT BAU KHCN","OT BAU KHDN", "OT BAU HKD", "OT SALON", "OT 3.6", 'OT 4.0', 'OT MYF88', 'OT KHQL'
+                        , 'LĐTD', 'CN', 'VCVP', 'TXCN', 'TT','KDOL','HUONGLUONG', 'XM 5.4', 'XM KHQL', 'XM MYF88', 'XM GCK',
                                                      'XM CMTNGT DIENNUOC',
                                                      'XM CMTNGT VIDIENTU']
                                    , key=f"nsp_{i}")
@@ -709,7 +744,10 @@ def add_new_doc():
                 with exp_col_11:
                     st.number_input("Max Ticket Size (triệu đồng)",min_value=1,max_value=2000,value=1,key=f"ts_max_{i}" )
                 with exp_col_12:
-                    st.number_input("CPV (%)",key=f"cpv_{i}" )
+                    if is_f88:
+                        st.number_input("CPV (%)",key=f"cpv_{i}" )
+                    elif is_partner:
+                        st.number_input("Phí ký gửi (%)",key=f"pkg_{i}" )
 
         col_addrule, col_delrule, col_empty2 = st.columns([1,1,8])
         with col_addrule:
@@ -758,25 +796,38 @@ def add_new_doc():
         elif btn_form_save:
             doc_rule = []
             for i in range(1, st.session_state.rule_count + 1):
+                selected_fund = st.session_state.get(f"fund_{i}", [])
+                cpv_value = None
+                pkg_value = None
+
+                if "F88" in selected_fund:
+                    cpv_value = st.session_state.get(f"cpv_{i}", None)
+                if "CIMB" in selected_fund or "MB" in selected_fund:
+                    pkg_value = st.session_state.get(f"pkg_{i}", None)
+
                 scheme_rule = {
                     "fund": st.session_state[f"fund_{i}"],
                     "custype": st.session_state[f"custype_{i}"],
                     "score": st.session_state[f"score_{i}"],
                     "paymethod": st.session_state[f"pttg_{i}"],
                     "products": st.session_state[f"nsp_{i}"],
+                    "tenor":st.session_state[f"tenor_{i}"],
                     "tradelead": st.session_state[f"vung_{i}"],
                     "province": st.session_state[f"tinh_{i}"],
                     "maxltv": st.session_state[f"ltv_{i}"],
                     "mints": st.session_state[f"ts_min_{i}"],
                     "maxts": st.session_state[f"ts_max_{i}"],
-                    "cpv": st.session_state[f"cpv_{i}"]
-                }
+                    "cpv": cpv_value,
+                    "pkg": pkg_value
+                    }
+
                 doc_rule.append({"SCHEME_RULE": json.dumps(scheme_rule,ensure_ascii=False)})
 
             st.session_state.form_data['DOCVERDTL'] = doc_rule
 
             try:
-                save_new_form(st.session_state.form_data)
+                with st.spinner("⏳ Vui lòng chờ cập nhật dữ liệu...", show_time=True):
+                    save_new_form(st.session_state.form_data)
                 st.success("Đã tạo mới thành công!")
                 st.session_state.form_step = 1
                 st.rerun()
@@ -932,12 +983,13 @@ with (st.container(key="home_result")):
         col_dtl_1, col_dtl_2 = st.columns([4,5])
         with col_dtl_1:
             st.markdown('Thông tin cơ bản')
-            sub_tbl1 = (detail.select(['DOC_NO','DOC_NAME','PIC','DOC_VER_ID','DOC_TYPE'])
-                        .group_by(['DOC_NO','DOC_NAME','PIC','DOC_TYPE'])
+            sub_tbl1 = (detail.select(['DOC_NO','DOC_NAME','PIC','DOC_VER_ID','DOC_TYPE','DOC_LINK'])
+                        .group_by(['DOC_NO','DOC_NAME','PIC','DOC_TYPE','DOC_LINK'])
                         .agg([
                 pl.col('DOC_VER_ID').n_unique().alias('VER_COUNT')
                 ])
-                .rename({'DOC_NO':'Số văn bản','DOC_NAME':'Tên văn bản','VER_COUNT':'Số lượng phiên bản','DOC_TYPE':'Loại văn bản'})
+                .rename({'DOC_NO':'Số văn bản','DOC_NAME':'Tên văn bản','VER_COUNT':'Số lượng phiên bản','DOC_TYPE':'Loại văn bản',
+                         'DOC_LINK':'Link văn bản'})
                 ).transpose(include_header=True)
 
             st.table(sub_tbl1,hide_index=True,hide_header=True)
@@ -979,12 +1031,14 @@ with (st.container(key="home_result")):
                     'score':'Điểm',
                     'paymethod':'Phương thức',
                     'products':'Sản phẩm',
+                    "tenor": "Kỳ hạn",
                     'tradelead':'Vùng',
                     'province':'Tỉnh',
                     'maxltv':'Max LTV (%)',
                     'mints':'Giá trị vay tối thiểu (triệu)',
                     'maxts': 'Giá trị vay tối đa (triệu)',
-                    'cpv': 'Chi phí vay (%)'
+                    'cpv': 'Chi phí vay (%)',
+                    'pkg': 'Phí ký gửi (%)'
 
                 }
                 with st.expander(label=f'Rule {i}', expanded=True):
@@ -1004,4 +1058,3 @@ with (st.container(key="home_result")):
         detail_filtered = df.filter(pl.col('DOC_ID')==selected_doc_id)
         # st.write(selected_doc_id)
         show_doc_detail(detail_filtered)
-
