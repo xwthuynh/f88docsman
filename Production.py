@@ -181,7 +181,8 @@ def save_new_form(form_data):
                  else doc["ASSET"],
         "DEPARTMENT": doc["DEPARTMENT"],
         "DOC_LINK": doc["DOC_LINK"],
-        'CREATED_DT': created_dt
+        'CREATED_DT': created_dt,
+        "REPLACED_DOC_NO": doc['REPLACED_DOC_NO']
     }
 
     # ---------------------------------
@@ -615,7 +616,7 @@ def add_new_doc():
             with new_doc_col2:
                 form_doclink = st.text_input(label='Link văn bản',type='url',placeholder='Dán đường link văn bản')
             with new_doc_col3:
-                form_doclink = st.text_input(label='Văn bản bị thay thế',placeholder='Nhập số văn bản bị thay thế')
+                form_docreplace = st.text_input(label='Văn bản bị thay thế',placeholder='Nhập số văn bản bị thay thế')
 
             form_col_1, form_col_2, form_col_3  = st.columns(3)
             with form_col_1:
@@ -645,7 +646,7 @@ def add_new_doc():
 
         if btn_form_nxt:
             st.session_state.form_data['DOCS'] = {'DOC_NAME':form_docname,'DOC_NO':form_docno, 'DOC_TYPE':form_doctype,
-                                              'ASSET':form_asset,'DEPARTMENT':form_dept,'DOC_LINK':form_doclink}
+                                              'ASSET':form_asset,'DEPARTMENT':form_dept,'DOC_LINK':form_doclink,'REPLACED_DOC_NO':form_docreplace}
             st.session_state.form_step = 2
             st.rerun(scope="fragment")
 
