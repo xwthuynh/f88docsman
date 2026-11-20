@@ -725,7 +725,7 @@ def add_new_doc():
                     st.multiselect("Điểm", ["Tốt","Khá","Trung bình","Kém","A", 'B', 'C', 'D', 'E'], key=f"score_{i}")
                 with exp_col_4:
                     st.multiselect("Nhóm sản phẩm", ["OT BAU KHCN","OT BAU KHDN", "OT BAU HKD", "OT SALON", "OT 3.6", 'OT 4.0', 'OT MYF88', 'OT KHQL'
-                        , 'LĐTD', 'CN', 'VCVP', 'TXCN', 'TT','KDOL','HUONGLUONG', 'XM 5.4', 'XM KHQL', 'XM MYF88', 'XM GCK',
+                        , 'Lao động tự do', 'Công nhân', 'Viên chức văn phòng', 'Tài xế công nghệ', 'Tiểu thương','Kinh doanh online','Hưởng lương', 'XM 5.4', 'XM KHQL', 'XM MYF88', 'XM GCK',
                                                      'XM CMTNGT DIENNUOC',
                                                      'XM CMTNGT VIDIENTU']
                                    , key=f"nsp_{i}")
