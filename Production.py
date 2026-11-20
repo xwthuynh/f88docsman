@@ -1040,7 +1040,7 @@ with (st.container(key="home_result")):
                     'pkg': 'Phí ký gửi (%)'
 
                 }
-                with st.expander(label=f'Rule {i}', expanded=True):
+                with st.expander(label=f'Rule {i}', expanded=False):
                     rule = json.loads(rule)
                     rule_tbl = pl.DataFrame({'key': [key_labels.get(key,key) for key in rule.keys()],
                                              'value': [', '.join(map(str,value)) if isinstance(value, list) else str(value) for value in rule.values()]
