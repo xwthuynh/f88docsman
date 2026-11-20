@@ -906,7 +906,7 @@ with (st.container(key="home_result")):
 
     df_display = (df_filtered
           .sort(['DOC_VER_ID','ISSUED_DT'],descending=[False,True])
-          .group_by(['DOC_VER_ID','DOC_ID'])
+          .group_by(['DOC_VER_ID','DOC_ID'],maintain_order=True)
           .agg(
         [pl.col('DOC_NAME').first(),
          pl.col('DOC_VER_TYPE').first(),
