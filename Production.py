@@ -616,7 +616,7 @@ def add_new_doc():
             with new_doc_col2:
                 form_doclink = st.text_input(label='Link văn bản',type='url',placeholder='Dán đường link văn bản')
             with new_doc_col3:
-                form_docreplace = st.text_input(label='Văn bản bị thay thế'
+                form_docreplace = st.multiselect(label='Văn bản bị thay thế'
                                                 ,options=[]
                                                 ,accept_new_options=True
                                                 ,placeholder='Nhập số văn bản bị thay thế')
