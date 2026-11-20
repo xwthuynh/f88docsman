@@ -609,11 +609,13 @@ def add_new_doc():
         with st.form(key='form_new_doc'):
             form_docname = st.text_input(label='Tên văn bản',placeholder='Nhập tên văn bản')
 
-            new_doc_col1, new_doc_col2 = st.columns(2)
+            new_doc_col1, new_doc_col2, new_doc_col3 = st.columns(3)
             with new_doc_col1:
                 form_docno = st.text_input(label='Số văn bản',placeholder='Nhập số văn bản')
             with new_doc_col2:
                 form_doclink = st.text_input(label='Link văn bản',type='url',placeholder='Dán đường link văn bản')
+            with new_doc_col3:
+                form_doclink = st.text_input(label='Văn bản bị thay thế',placeholder='Nhập số văn bản bị thay thế')
 
             form_col_1, form_col_2, form_col_3  = st.columns(3)
             with form_col_1:
