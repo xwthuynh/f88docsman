@@ -978,7 +978,7 @@ with (st.container(key="home_result")):
     )
 
 
-    @st.dialog("Chi tiết văn bản", width="large",on_dismiss=reset_home_tbl_ver)
+    @st.dialog("Chi tiết văn bản", width="large",on_dismiss="rerun")
     def show_doc_detail(detail):
         col_dtl_1, col_dtl_2 = st.columns([4,5])
         with col_dtl_1:
